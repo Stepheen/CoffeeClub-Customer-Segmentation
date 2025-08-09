@@ -1,0 +1,307 @@
+# Coffee Club Customer Segmentation Analysis
+
+## Introduction: 
+
+This project analyzes historical customer, offer, and transaction data to improve marketing effectiveness, personalize offers, and boost customer satisfaction and loyalty. It involves restoring the provided database backup, ensuring schema compliance, performing customer segmentation to identify distinct groups, and conducting descriptive analytics to uncover key behavioral and offer performance trends.
+
+### Objective: 
+
+Segment Coffee Club’s customers into distinct groups based on shared characteristics and behaviors to enable targeted marketing and personalized customer experiences.
+
+### Aim: 
+
+Load customer, offer and event data from PostgreSQL, then perform data cleaning, transformation, modeling and clustering.
+
+## Load Required Libraries
+
+```{r}
+library(DBI)        # Database connectivity
+library(RPostgres)  # Allows R to connect to PostgreSQL databases
+library(dplyr)      # Data manipulation
+library(ggplot2)    # Visualization
+library(tidyr)      # Data cleaning helpers
+```
+
+## Connect to PostgreSQL Database & Load Tables
+
+```{r}
+coffeeclub_data <- dbConnect(
+                            RPostgres::Postgres(),  
+                            dbname   = Sys.getenv("PG_DBNAME"),
+                            host     = Sys.getenv("PG_HOST"),
+                            port     = Sys.getenv("PG_PORT"),
+                            user     = Sys.getenv("PG_USER"),
+                            password = Sys.getenv("PG_PASSWORD")
+                            )
+
+# Check available tables in the connected database
+dbListTables(coffeeclub_data)
+
+# Load tables into R dataframe
+customers <- dbReadTable(coffeeclub_data, "customers")
+offers <- dbReadTable(coffeeclub_data, "offers")
+events <- dbReadTable(coffeeclub_data, "events")
+
+# Inspect first row of each dataset
+head(customers)
+head(offers)
+head(events)
+
+# Close database connection to free resources
+dbDisconnect(coffeeclub_data) 
+```
+
+# Exploratory Data Analysis
+
+Exploratory analysis steps:
+
+-   Check for the data Type of each column, standardize column formats and dimension of the data set
+
+-   Check for missing Values.
+
+-   Remove duplicates and handle missing values.
+
+-   Descriptive Summary(statistics) of the dataset in general.
+
+-   Feature Engineering: Add a Membership Tenure column (based on became_member_on)
+
+```{r}
+summary(customers)
+summary(offers)
+summary(events)
+```
+
+```{r}
+glimpse(customers)
+glimpse(offers)
+glimpse(events)
+```
+
+```{r}
+# Check number of missing values for each column
+missing_per_column <- colSums(is.na(customers))
+print(missing_per_column)
+```
+
+```{r}
+# Mean and median with all data
+mean_age_all <- mean(customers$age, na.rm = TRUE)
+median_age_all <- median(customers$age, na.rm = TRUE)
+
+mean_age_all
+median_age_all
+```
+
+```{r}
+# Age statistics
+# Calculate mean and median of age including all values
+mean_age_all <- mean(customers$age, na.rm = TRUE)       # Mean including age = 118
+median_age_all <- median(customers$age, na.rm = TRUE)   # Median including age = 118
+
+# Calculate mean and median of age excluding age = 118
+mean_age_clean <- mean(customers$age[customers$age != 118], na.rm = TRUE)     # Mean excluding age = 118
+median_age_clean <- median(customers$age[customers$age != 118], na.rm = TRUE) # Median excluding age = 118
+
+# Print both results to compare
+cat("With age = 118:\nMean =", mean_age_all, "\nMedian =", median_age_all, "\n\n")
+cat("Without age = 118:\nMean =", mean_age_clean, "\nMedian =", median_age_clean, "\n")
+```
+
+```{r}
+# Income statistics
+mean_income <- mean(customers$income, na.rm = TRUE)
+median_income <- median(customers$income, na.rm = TRUE)
+
+cat("Mean of income =", mean_income, "\nMedian of income =", median_income)
+```
+
+```{r}
+gender_count <- table(customers$gender)
+gender_count
+sum(is.na(customers$gender))
+```
+
+```{r}
+# Gender cleaning - replacing "O" and NA with "M"
+customers$gender[customers$gender == "O"] <- "M"
+customers$gender[is.na(customers$gender)] <- "M"
+
+# Impute missing income with 64,000
+customers$income[is.na(customers$income)] <- 64000
+```
+
+```{r}
+# Save cleaned customers dataset
+write.csv(customers, "cleaned_customers.csv", row.names = FALSE)
+```
+
+```{r}
+# Missing values in events dataset
+sum(is.na(events))
+missing_per_eventcolumn <- colSums(is.na(events))
+print(missing_per_eventcolumn)
+```
+
+```{r}
+# Fill missing offer IDs in events with "None"
+events$offer_id[is.na(events$offer_id)] <- "None"
+```
+
+# Joining Data to Link Customer Demographics with their Transaction and Interactions
+
+```{r}
+ # Join customers with events
+customer_events <- events %>%
+   left_join(customers, by = "customer_id")
+
+# Prepare offers with only the necessary columns
+offers_needed <- offers %>%
+  select(offer_id, difficulty, offer_type, duration, channels)
+
+# Perform left_join — this keeps ALL rows in customer_events
+# and fills in offer details where offer_id matches
+full_data <- customer_events %>%
+  left_join(offers_needed, by = "offer_id")
+
+full_data <- full_data %>%
+  mutate(
+    offer_type  = ifelse(offer_id == "None", "no_offer", offer_type),
+    difficulty  = ifelse(offer_id == "None", 0, difficulty),
+    duration    = ifelse(offer_id == "None", 0, duration),
+    channels     = ifelse(offer_id == "None", "none", channels)
+  )
+```
+
+```{r}
+# Calculate membership tenure in days
+full_data <- full_data %>%
+  mutate(became_member_on = as.Date(became_member_on),
+         membership_tenure = as.numeric(Sys.Date() - became_member_on))
+```
+
+```{r}
+# Ensure the 'channels' column is a character vector to avoid factor issues
+full_data$channels <- as.character(full_data$channel)
+
+# Create binary columns for each channel type using grepl()
+# Each column will be TRUE if the channel appears in the original string, FALSE otherwise
+full_data$channel_email <- grepl("email", full_data$channels)
+full_data$channel_mobile <- grepl("mobile", full_data$channels)
+full_data$channel_web <- grepl("web", full_data$channels)
+full_data$channel_social <- grepl("social", full_data$channels)
+
+# Drop the original 'channels' column if it's no longer needed
+# full_data$channel <- NULL
+
+```
+
+```{r}
+# Save final joined dataset
+write.csv(full_data, "final_coffeclub_data.csv", row.names = FALSE)
+```
+
+# Methodology : 
+
+## Employing Statistical Clustering Techniques
+
+Data preparation and analysis were conducted in R using packages such as `dplyr`, `ggplot2`, and `RPostgres`. After exploratory analysis, statistical clustering techniques (K-means) were applied to scaled, aggregated customer features to identify meaningful customer segments.0
+
+## Selecting Relevant Features for Clustering
+
+```{r}
+# Select relevant features including customer_id
+clustering_data <- full_data %>%
+  select(customer_id, age, income, membership_tenure, reward, amount, difficulty, duration)
+
+# Remove rows with missing values (NAs)
+clustering_data_clean <- na.omit(clustering_data)
+
+# Aggregate to one row per customer (avoids duplication)
+customer_summary <- clustering_data_clean %>%
+  group_by(customer_id) %>%
+  summarise(
+    age = mean(age),
+    income = mean(income),
+    membership_tenure = mean(membership_tenure),
+    reward = mean(reward),
+    amount = mean(amount),
+    difficulty = mean(difficulty),
+    duration = mean(duration)
+  )
+
+# Scale features for clustering
+scaled_data <- scale(customer_summary %>% select(-customer_id))
+
+# Determine optimal k using Elbow method
+wss <- numeric(10)
+for (k in 1:10) {
+  set.seed(42)
+  km_model <- kmeans(scaled_data, centers = k, nstart = 10)
+  wss[k] <- km_model$tot.withinss
+}
+
+# Plot Elbow chart
+plot(1:10, wss, type = "b",
+     xlab = "Number of Clusters (k)",
+     ylab = "Total Within-Cluster Sum of Squares (WSS)",
+     main = "Elbow Method for Optimal k",
+     pch = 19, col = "blue")
+
+# Perform k-means clustering with chosen k (k = 3)
+set.seed(42)
+k <- 3
+final_kmeans <- kmeans(scaled_data, centers = k, nstart = 25)
+
+# Assign clusters to each customer
+customer_clusters <- customer_summary %>%
+  mutate(cluster = final_kmeans$cluster)
+
+# PCA for visualization
+pca_result <- prcomp(scaled_data)
+pca_df <- as.data.frame(pca_result$x[, 1:2])
+pca_df$cluster <- as.factor(customer_clusters$cluster)
+
+# PCA for visualization
+ggplot(pca_df, aes(x = PC1, y = PC2, color = cluster)) +
+  geom_point(size = 2) +
+  labs(title = "Customer Segments (PCA)", x = "PC1", y = "PC2") +
+  theme_minimal()
+
+# Cluster summary characteristics
+cluster_summary <- customer_clusters %>%
+  group_by(cluster) %>%
+  summarise(
+    avg_age = mean(age),
+    avg_income = mean(income),
+    avg_membership_tenure = mean(membership_tenure),
+    avg_reward = mean(reward),
+    avg_amount = mean(amount),
+    avg_difficulty = mean(difficulty),
+    avg_duration = mean(duration),
+    count = n()
+  )
+
+# Save cluster assignment and summary to CSV
+write.csv(customer_clusters %>% select(customer_id, cluster),
+          "customer_clusters.csv", row.names = FALSE)
+
+write.csv(cluster_summary, "cluster_summary.csv", row.names = FALSE)
+
+# Save cluster centers (scaled)
+cluster_centers <- as.data.frame(final_kmeans$centers)
+write.csv(cluster_centers, "cluster_centers_scaled.csv", row.names = FALSE)
+```
+
+## Cluster Insights:
+
+The segmentation analysis revealed three distinct customer groups with clear differences in demographics, spending habits, and engagement patterns.
+
+-   **Cluster 1 - High-Value Regulars** represent the most loyal and profitable segment, responding well to personalized, high-reward promotions.
+
+-   **Cluster 2 - Discount Seekers** are highly active but value-driven, favoring simple, low-barrier offers
+
+-   **Cluster 3 - Passive Users** show minimal spending and low conversion rates, requiring reactivation strategies or reduced campaign focus.
+
+## Conclusion:
+
+By tailoring marketing strategies and communication channels to each segment’s preferences, Coffee Club can optimize offer performance, increase loyalty, and maximize customer lifetime value.
