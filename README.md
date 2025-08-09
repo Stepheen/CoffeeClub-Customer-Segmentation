@@ -66,6 +66,24 @@ CoffeeClubDashboard.pbix – interactive dashboard file
 
 CoffeeClubDashboard_August2025.pdf – static PDF export
 
+
+
+
+
+
+
+
+<img width="2606" height="1467" alt="CoffeClub Overview Dashboard" src="https://github.com/user-attachments/assets/10261653-a4ef-4351-a446-658dfebac999" />
+
+
+
+
+
+
+
+
+
+
 **Tools & Technologies**
 * Language: R (data wrangling, modeling, clustering)
 
